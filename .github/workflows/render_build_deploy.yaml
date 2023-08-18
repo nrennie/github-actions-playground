@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
         
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
@@ -33,10 +35,14 @@ jobs:
         shell: Rscript {0}
         
       - name: Commit files
-        uses: "ludeeus/action-push@master"
-        env:
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add doc.pdf
+          git commit -m "Render PDF"
+          
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          ACTION_MAIL: "actions@github.com"
-          ACTION_NAME: "GitHub Actions"
-          ACTION_BRANCH: "full-pdf"
-          ACTION_MESSAGE: "Render PDF"
+          branch: full-pdf
