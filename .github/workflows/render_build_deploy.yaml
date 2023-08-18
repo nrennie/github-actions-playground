@@ -42,4 +42,4 @@ jobs:
         env:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           REPO: self
-          BRANCH: gh-pages
+          BRANCH: full-pdf
