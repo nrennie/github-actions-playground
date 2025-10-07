@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: '0 0 1 * *'  # Runs at 00:00 UTC on the 1st of every month
 
+env:
+  PROJECT_NUMBER: 1 
+
 jobs:
   reopen-issue:
     runs-on: ubuntu-latest
@@ -12,24 +15,109 @@ jobs:
       issues: write
     
     steps:
-      - name: Reopen Issue
+      - name: Reopen Issue and Update Project Status
         uses: actions/github-script@v7
         with:
           script: |
+            // Reopen the issue
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: 1,
               state: 'open'
             });
-                  
-      - name: Add Comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
+                        
+            // Get the project
+            const projectQuery = `
+              query($owner: String!, $number: Int!) {
+                repository(owner: $owner, name: "${context.repo.repo}") {
+                  projectV2(number: $number) {
+                    id
+                    title
+                  }
+                }
+              }
+            `;
+            
+            const projectResult = await github.graphql(projectQuery, {
+              owner: context.repo.owner,
+              number: parseInt(process.env.PROJECT_NUMBER)
+            });
+            
+            const projectId = projectResult.repository.projectV2.id;
+            console.log(`Found project: ${projectResult.repository.projectV2.title}`);
+            
+            // Get the issue to find its node_id
+            const issue = await github.rest.issues.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 1,
-              body: '🔄 This issue has been automatically reopened by GitHub Actions.'
+              issue_number: 1
             });
+            
+            // Find the issue's item in the project
+            const itemQuery = `
+              query($projectId: ID!, $issueNodeId: ID!) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    items(first: 100) {
+                      nodes {
+                        id
+                        content {
+                          ... on Issue {
+                            id
+                          }
+                        }
+                      }
+                    }
+                    field(name: "Status") {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            
+            const itemResult = await github.graphql(itemQuery, {
+              projectId: projectId,
+              issueNodeId: issue.data.node_id
+            });
+            
+            // Find the project item for this issue
+            const projectItem = itemResult.node.items.nodes.find(
+              item => item.content && item.content.id === issue.data.node_id
+            );
+            
+            // Find the "Todo" option
+            const statusField = itemResult.node.field;
+            const todoOption = statusField.options.find(opt => opt.name === 'Todo');
+            
+            
+            // Update the status to "Todo"
+            const updateMutation = `
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: {singleSelectOptionId: $optionId}
+                }) {
+                  projectV2Item {
+                    id
+                  }
+                }
+              }
+            `;
+            
+            await github.graphql(updateMutation, {
+              projectId: projectId,
+              itemId: projectItem.id,
+              fieldId: statusField.id,
+              optionId: todoOption.id
+            });
+            
