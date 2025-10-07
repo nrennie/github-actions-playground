@@ -1,4 +1,4 @@
-name: Reopen Issue
+name: Reopen GitHub Issue
 
 on:
   workflow_dispatch:
@@ -6,7 +6,10 @@ on:
     - cron: '0 0 1 * *'  # Runs at 00:00 UTC on the 1st of every month
 
 env:
-  PROJECT_NUMBER: 2
+  ISSUE_NUMBER: 1  
+  PROJECT_NUMBER: 2 
+  PROJECT_OWNER: 'nrennie'
+  PROJECT_TYPE: 'user'
 
 jobs:
   reopen-issue:
@@ -19,39 +22,85 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER);
+            
             // Reopen the issue
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 1,
+              issue_number: issueNumber,
               state: 'open'
             });
-                        
-            // Get the project
-            const projectQuery = `
-              query($owner: String!, $number: Int!) {
-                repository(owner: $owner, name: "${context.repo.repo}") {
-                  projectV2(number: $number) {
-                    id
-                    title
+            
+            // Determine the project query based on type
+            const projectType = process.env.PROJECT_TYPE || 'repo';
+            const projectOwner = process.env.PROJECT_OWNER || context.repo.owner;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER);
+            
+            let projectQuery;
+            let queryVars;
+            
+            if (projectType === 'repo') {
+              projectQuery = `
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    projectV2(number: $number) {
+                      id
+                      title
+                    }
                   }
                 }
-              }
-            `;
+              `;
+              queryVars = {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: projectNumber
+              };
+            } else if (projectType === 'user') {
+              projectQuery = `
+                query($login: String!, $number: Int!) {
+                  user(login: $login) {
+                    projectV2(number: $number) {
+                      id
+                      title
+                    }
+                  }
+                }
+              `;
+              queryVars = {
+                login: projectOwner,
+                number: projectNumber
+              };
+            } else if (projectType === 'org') {
+              projectQuery = `
+                query($login: String!, $number: Int!) {
+                  organization(login: $login) {
+                    projectV2(number: $number) {
+                      id
+                      title
+                    }
+                  }
+                }
+              `;
+              queryVars = {
+                login: projectOwner,
+                number: projectNumber
+              };
+            }
             
-            const projectResult = await github.graphql(projectQuery, {
-              owner: context.repo.owner,
-              number: parseInt(process.env.PROJECT_NUMBER)
-            });
+            const projectResult = await github.graphql(projectQuery, queryVars);
             
-            const projectId = projectResult.repository.projectV2.id;
-            console.log(`Found project: ${projectResult.repository.projectV2.title}`);
+            const projectData = projectResult.repository?.projectV2 || 
+                               projectResult.user?.projectV2 || 
+                               projectResult.organization?.projectV2;
+            
+            const projectId = projectData.id;
             
             // Get the issue to find its node_id
             const issue = await github.rest.issues.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 1
+              issue_number: issueNumber
             });
             
             // Find the issue's item in the project
@@ -93,10 +142,17 @@ jobs:
               item => item.content && item.content.id === issue.data.node_id
             );
             
+            if (!projectItem) {
+              return;
+            }
+            
             // Find the "Todo" option
             const statusField = itemResult.node.field;
             const todoOption = statusField.options.find(opt => opt.name === 'Todo');
             
+            if (!todoOption) {
+              return;
+            }
             
             // Update the status to "Todo"
             const updateMutation = `
@@ -120,4 +176,3 @@ jobs:
               fieldId: statusField.id,
               optionId: todoOption.id
             });
-            
