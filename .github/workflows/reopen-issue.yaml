@@ -1,4 +1,4 @@
-name: Reopen GitHub Issue
+name: Reopen issue
 
 on:
   workflow_dispatch:
@@ -7,9 +7,6 @@ on:
 
 env:
   ISSUE_NUMBER: 1  
-  PROJECT_NUMBER: 2 
-  PROJECT_OWNER: 'nrennie'
-  PROJECT_TYPE: 'user'
 
 jobs:
   reopen-issue:
@@ -18,161 +15,16 @@ jobs:
       issues: write
     
     steps:
-      - name: Reopen Issue and Update Project Status
+      - name: Reopen issue
         uses: actions/github-script@v7
         with:
           script: |
-            const issueNumber = parseInt(process.env.ISSUE_NUMBER);
-            
-            // Reopen the issue
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER); 
+
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
               state: 'open'
             });
-            
-            // Determine the project query based on type
-            const projectType = process.env.PROJECT_TYPE || 'repo';
-            const projectOwner = process.env.PROJECT_OWNER || context.repo.owner;
-            const projectNumber = parseInt(process.env.PROJECT_NUMBER);
-            
-            let projectQuery;
-            let queryVars;
-            
-            if (projectType === 'repo') {
-              projectQuery = `
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    projectV2(number: $number) {
-                      id
-                      title
-                    }
-                  }
-                }
-              `;
-              queryVars = {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                number: projectNumber
-              };
-            } else if (projectType === 'user') {
-              projectQuery = `
-                query($login: String!, $number: Int!) {
-                  user(login: $login) {
-                    projectV2(number: $number) {
-                      id
-                      title
-                    }
-                  }
-                }
-              `;
-              queryVars = {
-                login: projectOwner,
-                number: projectNumber
-              };
-            } else if (projectType === 'org') {
-              projectQuery = `
-                query($login: String!, $number: Int!) {
-                  organization(login: $login) {
-                    projectV2(number: $number) {
-                      id
-                      title
-                    }
-                  }
-                }
-              `;
-              queryVars = {
-                login: projectOwner,
-                number: projectNumber
-              };
-            }
-            
-            const projectResult = await github.graphql(projectQuery, queryVars);
-            
-            const projectData = projectResult.repository?.projectV2 || 
-                               projectResult.user?.projectV2 || 
-                               projectResult.organization?.projectV2;
-            
-            const projectId = projectData.id;
-            
-            // Get the issue to find its node_id
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber
-            });
-            
-            // Find the issue's item in the project
-            const itemQuery = `
-              query($projectId: ID!, $issueNodeId: ID!) {
-                node(id: $projectId) {
-                  ... on ProjectV2 {
-                    items(first: 100) {
-                      nodes {
-                        id
-                        content {
-                          ... on Issue {
-                            id
-                          }
-                        }
-                      }
-                    }
-                    field(name: "Status") {
-                      ... on ProjectV2SingleSelectField {
-                        id
-                        options {
-                          id
-                          name
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            `;
-            
-            const itemResult = await github.graphql(itemQuery, {
-              projectId: projectId,
-              issueNodeId: issue.data.node_id
-            });
-            
-            // Find the project item for this issue
-            const projectItem = itemResult.node.items.nodes.find(
-              item => item.content && item.content.id === issue.data.node_id
-            );
-            
-            if (!projectItem) {
-              return;
-            }
-            
-            // Find the "Todo" option
-            const statusField = itemResult.node.field;
-            const todoOption = statusField.options.find(opt => opt.name === 'Todo');
-            
-            if (!todoOption) {
-              return;
-            }
-            
-            // Update the status to "Todo"
-            const updateMutation = `
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                updateProjectV2ItemFieldValue(input: {
-                  projectId: $projectId
-                  itemId: $itemId
-                  fieldId: $fieldId
-                  value: {singleSelectOptionId: $optionId}
-                }) {
-                  projectV2Item {
-                    id
-                  }
-                }
-              }
-            `;
-            
-            await github.graphql(updateMutation, {
-              projectId: projectId,
-              itemId: projectItem.id,
-              fieldId: statusField.id,
-              optionId: todoOption.id
-            });
+
